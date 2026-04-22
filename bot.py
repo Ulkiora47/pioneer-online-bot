@@ -203,6 +203,7 @@ async def post_init(app: Application):
         BotCommand("help",     "❓ Помощь"),
         BotCommand("clients",  "👥 Список клиентов (тренер)"),
         BotCommand("stats",    "📊 Статистика бота (тренер)"),
+        BotCommand("client",   "👤 Карточка клиента (тренер)"),
     ])
 
 # ── Команды ────────────────────────────────────────────────────────────────
@@ -495,6 +496,123 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
+async def cmd_client(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Просмотр карточки конкретного клиента. Только для тренера.
+    Использование: /client 123456789
+    Или без ID — показывает список с ID для выбора."""
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Команда только для тренера.")
+        return
+
+    data = load_data()
+    args = ctx.args  # аргументы после команды
+
+    # Без аргумента — показать список с ID
+    if not args:
+        if not data:
+            await update.message.reply_text("Клиентов пока нет.")
+            return
+        lines = ["👤 *Выбери клиента:*\n", "Напиши `/client ID` чтобы открыть карточку\n"]
+        for uid, c in data.items():
+            name    = c.get("name", "Новый клиент")
+            tg_user = c.get("tg_username", "")
+            sport_map = {"pl":"🏋 ПЛ/ТА","bb":"💪 ББ","cf":"⚡ CF","cy":"🚴 Цикл","ma":"🥊 Едино"}
+            sport   = sport_map.get(c.get("sport",""), "—")
+            logs    = len(c.get("log", []))
+            week    = c.get("current_week", 1)
+            lines.append(f"• *{name}* {tg_user}\n  ID: `{uid}` | {sport} | трен: {logs} | нед: {week}")
+        text = "\n\n".join(lines)
+        for chunk in [text[i:i+4000] for i in range(0, len(text), 4000)]:
+            await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+        return
+
+    # С аргументом — показать карточку клиента
+    target_id = args[0].strip()
+    c = data.get(target_id)
+    if not c:
+        await update.message.reply_text(
+            f"❌ Клиент с ID `{target_id}` не найден.\n\nНапиши /client чтобы увидеть список.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    sport_map = {"pl":"🏋 Пауэрлифтинг/ТА","bb":"💪 Бодибилдинг","cf":"⚡ Кроссфит",
+                 "cy":"🚴 Циклические","ma":"🥊 Единоборства"}
+    sport    = sport_map.get(c.get("sport",""), "—")
+    name     = c.get("name", "—")
+    tg_user  = c.get("tg_username", "нет username")
+    joined   = c.get("joined_at","")[:10] if c.get("joined_at") else "—"
+    week     = c.get("current_week", 1)
+    logs     = c.get("log", [])
+    history  = c.get("history", [])
+    program  = c.get("program", "")
+
+    # Считаем средние показатели
+    all_feels = [float(e["feeling"]) for e in logs if str(e.get("feeling","")).replace(".","").isdigit()]
+    all_rpes  = [float(e["rpe"])     for e in logs if str(e.get("rpe","")).replace(".","").isdigit()]
+    avg_feel  = f"{sum(all_feels)/len(all_feels):.1f}" if all_feels else "—"
+    avg_rpe   = f"{sum(all_rpes)/len(all_rpes):.1f}"   if all_rpes  else "—"
+
+    # Карточка клиента
+    card = (
+        f"👤 *Карточка клиента*\n\n"
+        f"*Имя:* {name}\n"
+        f"*Telegram:* {tg_user}\n"
+        f"*ID:* `{target_id}`\n"
+        f"*В боте с:* {joined}\n\n"
+        f"*Вид спорта:* {sport}\n"
+        f"*Текущая неделя:* {week}\n"
+        f"*Сообщений:* {len(history)}\n\n"
+        f"📓 *Дневник тренировок:* {len(logs)} записей\n"
+        f"😴 Ср. самочувствие: {avg_feel}/10\n"
+        f"💪 Ср. RPE: {avg_rpe}/10\n"
+    )
+    await update.message.reply_text(card, parse_mode=ParseMode.MARKDOWN)
+
+    # Последние 3 тренировки
+    if logs:
+        last3 = logs[-3:][::-1]
+        trn_text = "📋 *Последние тренировки:*\n\n" + "\n\n".join(fmt(e) for e in last3)
+        for chunk in [trn_text[i:i+4000] for i in range(0, len(trn_text), 4000)]:
+            try:
+                await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+            except:
+                await update.message.reply_text(chunk)
+
+    # Текущая программа
+    if program:
+        prog_preview = program[:3000] + ("..." if len(program) > 3000 else "")
+        prog_text = f"📋 *Программа тренировок:*\n\n{prog_preview}"
+        for chunk in [prog_text[i:i+4000] for i in range(0, len(prog_text), 4000)]:
+            try:
+                await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+            except:
+                await update.message.reply_text(chunk)
+    else:
+        await update.message.reply_text("📋 Программа ещё не составлена.")
+
+    # AI-анализ клиента если есть данные
+    if logs:
+        await update.message.reply_text("🔍 _Формирую тренерский анализ..._", parse_mode=ParseMode.MARKDOWN)
+        prog_ctx = f"\nПрограмма:\n{program[:800]}" if program else ""
+        prompt = (
+            f"Атлет: {name} | Вид спорта: {sport} | Неделя: {week}{prog_ctx}\n\n"
+            f"Дневник тренировок (последние записи):\n" +
+            "\n\n".join(fmt(e) for e in logs[-10:]) +
+            "\n\nДай краткий тренерский анализ:\n"
+            "1. *Общий прогресс* — как идут дела\n"
+            "2. *На что обратить внимание* — риски, проблемы\n"
+            "3. *Рекомендация тренеру* — что скорректировать в программе"
+        )
+        try:
+            analysis = claude([{"role":"user","content":prompt}], system=SYSTEM_ANALYSIS)
+            await update.message.reply_text(
+                f"🤖 *Тренерский анализ:*\n\n{analysis}",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            log.error(f"Client analysis error: {e}")
+
 # ── /log — ConversationHandler ─────────────────────────────────────────────
 async def cmd_log_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     week = get_client(update.effective_user.id).get("current_week", 1)
@@ -657,6 +775,7 @@ def main():
     app.add_handler(CommandHandler("adjust",   cmd_adjust))
     app.add_handler(CommandHandler("clients",  cmd_clients))
     app.add_handler(CommandHandler("stats",    cmd_stats))
+    app.add_handler(CommandHandler("client",   cmd_client))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     log.info("🚀 Pioneer Online — Telegram Bot запущен!")
