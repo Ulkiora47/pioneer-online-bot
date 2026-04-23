@@ -14,6 +14,11 @@ from telegram.ext import (
     ConversationHandler, filters, ContextTypes
 )
 from telegram.constants import ParseMode, ChatAction
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    PILLOW_OK = True
+except ImportError:
+    PILLOW_OK = False
 
 # ── Настройки ──────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "ВАШ_ТОКЕН_TELEGRAM")
@@ -29,34 +34,30 @@ log = logging.getLogger(__name__)
 LOG_DAY, LOG_FEEL, LOG_RPE, LOG_WEIGHTS, LOG_NOTES = range(5)
 
 # ── Системные промпты ──────────────────────────────────────────────────────
-SYSTEM_MAIN = """Ты — профессиональный тренировочный ассистент зала Пионер (Pioneer Online).
+SYSTEM_MAIN = """Ты — ассистент тренерской команды зала Пионер (Pioneer Online). Зал работает с 2014 года, 2000+ результатов от фитнеса до МС.
 
-О зале: Пионер работает с 2014 года. За это время более 2000 человек достигли результатов — от первых успехов в фитнесе до разрядов мастера спорта. Ты являешься цифровым продолжением экспертизы зала и его тренеров.
+СТИЛЬ: короткие сообщения, живой язык, как пишет тренер другу. Никакой воды и длинных объяснений. Один вопрос — одно сообщение. Поддерживай, но без пафоса.
 
-СПЕЦИАЛИЗАЦИИ: пауэрлифтинг/ТА, бодибилдинг/фитнес, кроссфит, циклические виды (бег/вело/плавание/триатлон), единоборства.
-
-СТИЛЬ ОБЩЕНИЯ: профессиональный, но живой и поддерживающий. Ты на стороне атлета. Отмечай прогресс, поддерживай мотивацию, указывай на риски без запугивания.
-
-АЛГОРИТМ АНКЕТЫ — СТРОГО СОБЛЮДАЙ. По одному шагу:
-Шаг 0: спроси имя атлета.
-Шаг 1: вид спорта и главная цель на 3–6 мес.
-Шаг 2: стаж, уровень, рекорды, что работало/нет, перерывы.
-Шаг 3: возраст, пол, рост/вес, травмы.
-Шаг 4: оборудование, дней в неделю, время.
-Шаг 5: работа, стресс, сон, питание.
-Шаг 6: специфические метрики (1ПМ, FTP, VDOT, бенчмарки).
-Только после шага 6 — составляй программу.
+АНКЕТА — строго по одному шагу, жди ответа:
+0. Имя
+1. Вид спорта + цель
+2. Стаж, уровень, рекорды
+3. Возраст, вес, травмы
+4. Оборудование, дней/нед, время на тренировку
+5. Работа, сон, стресс
+6. Ключевые метрики (1ПМ / FTP / VDOT / бенчмарки)
+→ Только после шага 6 составляй программу.
 
 СПЕЦИФИКА:
-ПАУЭРЛИФТИНГ/ТА: блоковая периодизация (ACC→TRA→REA→пик), RPE, 1ПМ/Wilks, разгрузка каждые 4 нед.
-БОДИБИЛДИНГ: двойная прогрессия, 6–20 повт, 10–20 сетов/группа/нед, сплиты по уровню.
-КРОССФИТ: сопряжённая периодизация, 3 модальности, 3 энергосистемы, масштабирование.
-ЦИКЛИЧЕСКИЕ: 80/20, FTP/VDOT/CSS, 4 периода, правило 10%.
-ЕДИНОБОРСТВА: ОФП подчинена технике, взрывная→анаэробная→аэробная, в сезоне −60%.
+ПЛ/ТА: блоки ACC→TRA→REA→пик, RPE, разгрузка каждые 4 нед.
+ББ: двойная прогрессия, 6–20 повт, сплиты по уровню.
+CF: 3 модальности, 3 энергосистемы, масштабирование.
+Цикл: 80/20, FTP/VDOT/CSS, правило 10%.
+Единоборства: ОФП после техники, в сезоне объём −60%.
 
-ФОРМАТ ПРОГРАММЫ: одна неделя за раз.
-В конце: "✅ Неделя N готова. Нажми ➡️ Следующая неделя чтобы продолжить."
-Отвечай по-русски. Telegram Markdown: *жирный*, _курсив_."""
+ПРОГРАММА: одна неделя за раз. После каждой: "✅ Неделя N готова. Пиши *далее* — следующая."
+
+ВАЖНО: пиши кратко. Максимум 5–7 строк на сообщение. Никаких длинных списков без запроса. Русский язык, Telegram Markdown."""
 
 SYSTEM_ANALYSIS = """Ты — профессиональный спортивный аналитик и тренер.
 Анализируй дневник тренировок, давай конкретные экспертные рекомендации.
@@ -71,6 +72,8 @@ ALIASES = {
     "мои записи":           "logview",
     "следующая неделя":     "nextweek",
     "далее":                "nextweek",
+    "шпаргалка":            "card",
+    "карточка недели":      "card",
     "корректировка":        "adjust",
     "начать заново":        "reset",
     "помощь":               "help",
@@ -90,10 +93,11 @@ def main_kb() -> ReplyKeyboardMarkup:
         [
             ["📓 Записать тренировку",  "📊 Анализ недели"],
             ["📈 Мой прогресс",          "📋 Мои записи"],
-            ["➡️ Следующая неделя",      "⚙️ Корректировка"],
+            ["🃏 Шпаргалка недели",      "➡️ Следующая неделя"],
+            ["⚙️ Корректировка",         "❓ Помощь"],
         ],
         resize_keyboard=True,
-        is_persistent=True,
+        one_time_keyboard=True,
     )
 
 def sport_kb() -> ReplyKeyboardMarkup:
@@ -205,9 +209,132 @@ async def post_init(app: Application):
         BotCommand("clients",  "👥 Список клиентов (тренер)"),
         BotCommand("stats",    "📊 Статистика бота (тренер)"),
         BotCommand("client",   "👤 Карточка клиента (тренер)"),
+        BotCommand("card",     "🃏 Шпаргалка недели — сохранить фото"),
     ])
 
 # ── Команды ────────────────────────────────────────────────────────────────
+
+def make_week_card(client: dict) -> bytes | None:
+    """Генерирует PNG-шпаргалку с планом текущей недели."""
+    if not PILLOW_OK:
+        return None
+    program = client.get("program", "")
+    if not program:
+        return None
+
+    RED = (220, 16, 16)
+    BLACK = (13, 13, 13)
+    WHITE = (255, 255, 255)
+    GRAY = (245, 245, 245)
+    LGRAY = (200, 200, 200)
+
+    W, PAD = 900, 36
+    font_big = font_mid = font_sm = font_xs = None
+    try:
+        font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        font_mid = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+        font_sm  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 15)
+        font_xs  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
+    except:
+        font_big = font_mid = font_sm = font_xs = ImageFont.load_default()
+
+    # Parse days from program text
+    import re
+    days = []
+    current_day = None
+    for line in program.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        day_match = re.search(r"(ПОНЕДЕЛЬНИК|ВТОРНИК|СРЕДА|ЧЕТВЕРГ|ПЯТНИЦА|СУББОТА|ВОСКРЕСЕНЬЕ)", line.upper())
+        if day_match:
+            if current_day:
+                days.append(current_day)
+            current_day = {"name": day_match.group(1).capitalize(), "lines": []}
+        elif current_day and ("|" in line or line.startswith(("-", "•", "–"))):
+            clean = re.sub(r"^[|]|[|]$", "", line).strip()
+            if clean and "---" not in clean and len(clean) > 3:
+                current_day["lines"].append(clean[:80])
+    if current_day:
+        days.append(current_day)
+
+    if not days:
+        return None
+
+    # Calculate height
+    HEADER_H = 80
+    DAY_H = 36
+    ROW_H = 22
+    FOOTER_H = 44
+    total_rows = sum(min(len(d["lines"]), 8) for d in days)
+    H = HEADER_H + len(days) * DAY_H + total_rows * ROW_H + FOOTER_H + PAD * 2
+
+    img = Image.new("RGB", (W, H), WHITE)
+    draw = ImageDraw.Draw(img)
+
+    # Header
+    draw.rectangle([0, 0, W, HEADER_H], fill=BLACK)
+    name = client.get("name", "Атлет")
+    week = client.get("current_week", 1)
+    draw.text((PAD, 16), "PIONEER ONLINE", font=font_big, fill=RED)
+    draw.text((PAD, 50), f"{name} · Неделя {week}", font=font_sm, fill=LGRAY)
+    draw.text((W - PAD - 120, 28), f"pioneer-online", font=font_xs, fill=(80,80,80))
+
+    y = HEADER_H + 16
+    for i, day in enumerate(days[:7]):
+        # Day header
+        bg = GRAY if i % 2 == 0 else WHITE
+        draw.rectangle([PAD, y, W - PAD, y + DAY_H - 4], fill=bg, outline=LGRAY, width=1)
+        draw.rectangle([PAD, y, PAD + 6, y + DAY_H - 4], fill=RED)
+        draw.text((PAD + 16, y + 8), day["name"].upper(), font=font_mid, fill=BLACK)
+        y += DAY_H
+
+        # Exercises
+        for line in day["lines"][:8]:
+            draw.text((PAD + 16, y + 3), f"  {line}", font=font_xs, fill=(60,60,60))
+            y += ROW_H
+
+        y += 4
+
+    # Footer
+    draw.rectangle([0, H - FOOTER_H, W, H], fill=BLACK)
+    draw.text((PAD, H - FOOTER_H + 14), "Зал Пионер · с 2014 года · 2000+ результатов", font=font_xs, fill=(120,120,120))
+
+    import io
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    buf.seek(0)
+    return buf.read()
+
+
+async def cmd_card(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Отправляет шпаргалку текущей недели как фото."""
+    uid = update.effective_user.id
+    c = get_client(uid)
+
+    if not c.get("program"):
+        await update.message.reply_text(
+            "Программы пока нет — сначала пройди анкету и получи план.",
+            reply_markup=main_kb()
+        )
+        return
+
+    await ctx.bot.send_chat_action(chat_id=uid, action=ChatAction.UPLOAD_PHOTO)
+
+    card = make_week_card(c)
+    if card:
+        week = c.get("current_week", 1)
+        name = c.get("name", "Атлет")
+        await update.message.reply_photo(
+            photo=card,
+            caption=f"📋 *{name} · Неделя {week}*\n\nСохрани и тренируйся без чата 💪",
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        await update.message.reply_text(
+            "Не смог создать карточку — попробуй /card чуть позже.",
+        )
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid   = update.effective_user.id
     tg    = update.effective_user
@@ -227,17 +354,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"{greeting}\n\n"
-        "🏆 *Добро пожаловать в Pioneer Online —*\n"
-        "персональный тренировочный ассистент зала *Пионер*.\n\n"
-        "С 2014 года зал Пионер помог более *2000 человек* достичь своих целей — "
-        "от первых результатов в фитнесе до разрядов мастера спорта.\n\n"
-        "Теперь весь этот опыт доступен тебе в этом боте:\n"
-        "📋 Персональная программа тренировок\n"
-        "📓 Дневник и анализ каждой тренировки\n"
-        "📊 Еженедельный разбор с рекомендациями тренера\n"
-        "📈 Отслеживание прогресса в динамике\n\n"
-        "Кнопки внизу доступны в любой момент 👇\n\n"
-        "Выбери свой вид спорта — начнём:",
+        "Это *Pioneer Online* — команда зала Пионер в твоём телефоне.\n\n"
+        "Составлю программу, буду вести дневник и разбирать каждую неделю вместе с тобой.\n\n"
+        "С какого вида спорта начнём?",
         parse_mode=ParseMode.MARKDOWN, reply_markup=sport_kb()
     )
 
@@ -373,7 +492,7 @@ async def cmd_nextweek(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         history.append({"role":"assistant","content":r})
         c["history"] = history[-40:]
         save_client(uid, c)
-        await reply(update, r, kb=main_kb())
+        await reply(update, r)
     except Exception as e:
         log.error(f"Next week error: {e}")
         await update.message.reply_text("⚠️ Ошибка. Попробуй ещё раз.", reply_markup=main_kb())
@@ -696,6 +815,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Проверяем нажатие кнопки
     cmd = resolve_alias(text)
     if cmd == "log":      return await cmd_log_start(update, ctx)
+    if cmd == "card":     return await cmd_card(update, ctx)
     if cmd == "week":     return await cmd_week(update, ctx)
     if cmd == "progress": return await cmd_progress(update, ctx)
     if cmd == "logview":  return await cmd_logview(update, ctx)
@@ -736,7 +856,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     c["history"] = history[-40:]
     save_client(uid, c)
 
-    await reply(update, r, kb=main_kb())
+    await reply(update, r)
 
 # ── Запуск ─────────────────────────────────────────────────────────────────
 def main():
@@ -777,6 +897,7 @@ def main():
     app.add_handler(CommandHandler("clients",  cmd_clients))
     app.add_handler(CommandHandler("stats",    cmd_stats))
     app.add_handler(CommandHandler("client",   cmd_client))
+    app.add_handler(CommandHandler("card",     cmd_card))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     log.info("🚀 Pioneer Online — Telegram Bot запущен!")
