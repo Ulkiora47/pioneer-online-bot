@@ -19,7 +19,8 @@ from telegram.constants import ParseMode, ChatAction
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "ВАШ_ТОКЕН_TELEGRAM")
 ANTHROPIC_KEY  = os.getenv("ANTHROPIC_KEY",  "ВАШ_КЛЮЧ_ANTHROPIC")
 ADMIN_ID       = int(os.getenv("ADMIN_ID", "0"))
-DATA_FILE      = Path("clients.json")
+DATA_FILE      = Path("/app/data/clients.json")
+Path("/app/data").mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(format="%(asctime)s | %(levelname)s | %(message)s", level=logging.INFO)
 log = logging.getLogger(__name__)
