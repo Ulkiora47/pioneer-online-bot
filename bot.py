@@ -1253,25 +1253,7 @@ def main():
         fallbacks=[CommandHandler("cancel", nut_cancel)],
     )
     app.add_handler(nut_conv)
-    app.add_handler(CommandHandler("nutrition", cmd_nutrition))
-    app.add_handler(CommandHandler("nutmenu",   cmd_nutmenu))
 
-    nut_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("nutrition", cmd_nutrition),
-            MessageHandler(filters.Regex(r"(?i)(питание|кбжу|нутрициолог|🥗)"), cmd_nutrition),
-        ],
-        states={
-            NUT_AGE:      [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_age)],
-            NUT_WEIGHT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_weight)],
-            NUT_HEIGHT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_height)],
-            NUT_ACTIVITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_activity)],
-            NUT_GOAL:     [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_goal)],
-            NUT_PREFS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_prefs)],
-        },
-        fallbacks=[CommandHandler("cancel", nut_cancel)],
-    )
-    app.add_handler(nut_conv)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     log.info("🚀 Pioneer Online — Telegram Bot запущен!")
