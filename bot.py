@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 # ── Состояния ConversationHandler ─────────────────────────────────────────
 LOG_DAY, LOG_FEEL, LOG_RPE, LOG_WEIGHTS, LOG_NOTES = range(5)
 NUT_GOAL, NUT_DATA, NUT_PREFS = range(5, 8)
-NUT_SEX, NUT_AGE, NUT_WEIGHT, NUT_HEIGHT, NUT_ACTIVITY, NUT_GOAL, NUT_PREFS = range(10, 17)
 
 # ── Системные промпты ──────────────────────────────────────────────────────
 SYSTEM_MAIN = """Ты — ассистент тренерской команды зала Пионер (Pioneer Online). Зал работает с 2014 года, 2000+ результатов от фитнеса до МС.
@@ -1263,7 +1262,6 @@ def main():
             MessageHandler(filters.Regex(r"(?i)(питание|кбжу|нутрициолог|🥗)"), cmd_nutrition),
         ],
         states={
-            NUT_SEX:      [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_sex)],
             NUT_AGE:      [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_age)],
             NUT_WEIGHT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_weight)],
             NUT_HEIGHT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_height)],
