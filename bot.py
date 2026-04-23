@@ -215,7 +215,7 @@ async def post_init(app: Application):
 # ── Команды ────────────────────────────────────────────────────────────────
 
 def make_week_card(client: dict) -> bytes | None:
-    """Генерирует PNG-шпаргалку 9:16 с планом текущей недели."""
+    """Генерирует PNG-шпаргалку 9:16."""
     if not PILLOW_OK:
         return None
     program = client.get("program", "")
@@ -224,43 +224,57 @@ def make_week_card(client: dict) -> bytes | None:
 
     import re, os, io
 
-    # Fonts - bundled with the project
     base_dir = os.path.dirname(os.path.abspath(__file__))
     font_bold_path = os.path.join(base_dir, "fonts", "DejaVuSans-Bold.ttf")
     font_reg_path  = os.path.join(base_dir, "fonts", "DejaVuSans.ttf")
 
-    def get_font(path, size, fallback_size=None):
-        try:
-            return ImageFont.truetype(path, size)
-        except:
-            return ImageFont.load_default(size=fallback_size or size)
+    def gf(path, size):
+        try: return ImageFont.truetype(path, size)
+        except: return ImageFont.load_default()
 
-    # Parse days
-    day_keys = ["ПОНЕДЕЛЬНИК","ВТОРНИК","СРЕДА","ЧЕТВЕРГ","ПЯТНИЦА","СУББОТА","ВОСКРЕСЕНЬЕ",
-                "ТРЕНИРОВКА","ДЕНЬ 1","ДЕНЬ 2","ДЕНЬ 3","ДЕНЬ 4","ДЕНЬ 5","ДЕНЬ 6","ДЕНЬ 7"]
-    short_names = {"ПОНЕДЕЛЬНИК":"ПН","ВТОРНИК":"ВТ","СРЕДА":"СР","ЧЕТВЕРГ":"ЧТ",
-                   "ПЯТНИЦА":"ПТ","СУББОТА":"СБ","ВОСКРЕСЕНЬЕ":"ВС"}
+    def clean(s):
+        """Remove markdown and extra symbols."""
+        s = re.sub(r'[*]+', '', s)
+        s = re.sub(r'[_]+', '', s)
+        s = re.sub(r'[\[\]()]', '', s)
+        s = re.sub(r'^[|#\-\s]+', '', s)
+        s = re.sub(r'[|]+$', '', s)
+        return s.strip()
 
+    # ── Parse days ──
+    day_keys = {
+        "ПОНЕДЕЛЬНИК":"ПН","ВТОРНИК":"ВТ","СРЕДА":"СР","ЧЕТВЕРГ":"ЧТ",
+        "ПЯТНИЦА":"ПТ","СУББОТА":"СБ","ВОСКРЕСЕНЬЕ":"ВС",
+    }
     days = []
     current = None
     for line in program.split("\n"):
         s = line.strip()
         if not s: continue
         up = s.upper()
-        found = False
-        for key in day_keys:
+
+        # Check day headers
+        matched = None
+        for key, short in day_keys.items():
             if key in up:
-                if current and current["lines"]:
-                    days.append(current)
-                short = short_names.get(key, key[:5])
-                current = {"name": short, "full": s[:35].strip("*#| "), "lines": []}
-                found = True
+                matched = (short, clean(s)[:40])
                 break
-        if not found and current:
-            clean = re.sub(r'^[|*#\-\s]+', '', s).strip()
-            clean = re.sub(r'[|]+$', '', clean).strip()
-            if clean and len(clean) > 4 and "---" not in clean:
-                current["lines"].append(clean[:75])
+        # Also catch "Тренировка N" and "День N"
+        if not matched:
+            m = re.search(r'(ТРЕНИРОВКА|ДЕНЬ)\s*(\d+)', up)
+            if m:
+                matched = (f"Т{m.group(2)}", clean(s)[:40])
+
+        if matched:
+            if current and current["lines"]:
+                days.append(current)
+            current = {"short": matched[0], "title": matched[1], "lines": []}
+        elif current:
+            c = clean(s)
+            # Skip separator lines and empty
+            if c and len(c) > 4 and not re.match(r'^[-=_]+$', c):
+                current["lines"].append(c[:80])
+
     if current and current["lines"]:
         days.append(current)
 
@@ -269,89 +283,95 @@ def make_week_card(client: dict) -> bytes | None:
 
     days = days[:7]
 
-    # Canvas 9:16 ratio
-    W = 1080
-    H = 1920
+    # ── Layout ──
+    W, H = 1080, 1920
     RED   = (220, 16, 16)
     BLACK = (13, 13, 13)
     WHITE = (255, 255, 255)
-    DARK  = (28, 28, 28)
-    LGRAY = (245, 245, 245)
-    MGRAY = (160, 160, 160)
-    CARD_BG = (38, 38, 38)
+    DARK  = (22, 22, 22)
+    CARD1 = (32, 32, 32)
+    CARD2 = (38, 38, 38)
+    GRAY  = (160, 160, 160)
+    LGRAY = (220, 220, 220)
+    PAD   = 52
 
     img = Image.new("RGB", (W, H), DARK)
     draw = ImageDraw.Draw(img)
 
-    PAD = 56
+    # Fonts
+    f_header = gf(font_bold_path, 58)
+    f_sub    = gf(font_reg_path,  30)
+    f_badge  = gf(font_bold_path, 32)
+    f_title  = gf(font_bold_path, 26)
+    f_line   = gf(font_reg_path,  25)
+    f_footer = gf(font_reg_path,  23)
 
     # ── HEADER ──
-    HEADER_H = 160
-    draw.rectangle([0, 0, W, HEADER_H], fill=BLACK)
-    # Red accent bar
-    draw.rectangle([0, 0, 8, HEADER_H], fill=RED)
-
-    f_title  = get_font(font_bold_path, 52)
-    f_sub    = get_font(font_reg_path,  28)
-    f_day    = get_font(font_bold_path, 30)
-    f_exer   = get_font(font_reg_path,  24)
-    f_footer = get_font(font_reg_path,  22)
-
+    HDR = 170
+    draw.rectangle([0, 0, W, HDR], fill=BLACK)
+    draw.rectangle([0, 0, 10, HDR], fill=RED)
     name = client.get("name", "Атлет")
     week = client.get("current_week", 1)
-
-    draw.text((PAD, 28), "PIONEER ONLINE", font=f_title, fill=RED)
-    draw.text((PAD, 96), f"{name}  ·  Неделя {week}", font=f_sub, fill=MGRAY)
+    draw.text((PAD, 30), "PIONEER ONLINE", font=f_header, fill=RED)
+    draw.text((PAD, 110), f"{name}  ·  Неделя {week}", font=f_sub, fill=GRAY)
 
     # ── DAYS ──
-    content_h = H - HEADER_H - 80  # footer
-    day_h = content_h // max(len(days), 1)
-    day_h = min(day_h, 240)
+    FOOTER_H = 80
+    available = H - HDR - FOOTER_H - PAD
+    n = len(days)
+    # Dynamic card height - fill all space
+    CARD_H = (available - (n - 1) * 14) // n
+    CARD_H = max(CARD_H, 180)
 
-    y = HEADER_H + 20
+    y = HDR + PAD // 2
 
     for i, day in enumerate(days):
-        # Day card
-        card_y = y
-        card_h = day_h - 12
-        bg = CARD_BG if i % 2 == 0 else (32, 32, 32)
-        draw.rectangle([PAD, card_y, W - PAD, card_y + card_h], fill=bg)
-        # Red left border
-        draw.rectangle([PAD, card_y, PAD + 6, card_y + card_h], fill=RED)
+        bg = CARD1 if i % 2 == 0 else CARD2
+        cx1, cy1, cx2, cy2 = PAD, y, W - PAD, y + CARD_H
 
-        # Day name badge
-        badge_w = 80
-        draw.rectangle([PAD + 14, card_y + 10, PAD + 14 + badge_w, card_y + 50], fill=RED)
-        draw.text((PAD + 20, card_y + 14), day["name"], font=f_day, fill=WHITE)
+        # Card background
+        draw.rectangle([cx1, cy1, cx2, cy2], fill=bg)
+        # Red left stripe
+        draw.rectangle([cx1, cy1, cx1 + 8, cy2], fill=RED)
 
-        # Full day title
-        full_text = day["full"] if len(day["full"]) > len(day["name"]) else ""
-        if full_text:
-            draw.text((PAD + 14 + badge_w + 16, card_y + 16), full_text[:40], font=f_sub, fill=MGRAY)
+        # Badge (fixed width 110px)
+        BW = 110
+        draw.rectangle([cx1 + 14, cy1 + 12, cx1 + 14 + BW, cy1 + 58], fill=RED)
+        draw.text((cx1 + 22, cy1 + 16), day["short"], font=f_badge, fill=WHITE)
+
+        # Day title (next to badge)
+        title = day["title"]
+        # Remove the short name from title if it starts with it
+        for key in day_keys:
+            if key in title.upper():
+                idx = title.upper().find(key)
+                title = title[idx + len(key):].strip(" —:-")
+                break
+        title = re.sub(r'^(ТРЕНИРОВКА|ДЕНЬ)\s*\d+', '', title, flags=re.I).strip(" :—-")
+        if title:
+            draw.text((cx1 + 14 + BW + 16, cy1 + 22), title[:35], font=f_title, fill=LGRAY)
 
         # Exercises
-        ex_y = card_y + 60
-        for j, line in enumerate(day["lines"][:4]):
-            if ex_y + 32 > card_y + card_h - 10:
-                break
-            dot_x = PAD + 20
-            draw.ellipse([dot_x, ex_y + 8, dot_x + 8, ex_y + 16], fill=RED)
-            draw.text((dot_x + 16, ex_y), line, font=f_exer, fill=LGRAY)
-            ex_y += 34
+        max_lines = min(len(day["lines"]), (CARD_H - 80) // 36)
+        ey = cy1 + 70
+        for j, ln in enumerate(day["lines"][:max_lines]):
+            draw.ellipse([cx1 + 24, ey + 9, cx1 + 34, ey + 19], fill=RED)
+            draw.text((cx1 + 44, ey), ln[:75], font=f_line, fill=LGRAY)
+            ey += 36
 
-        if len(day["lines"]) > 4:
-            draw.text((PAD + 20, ex_y), f"+ ещё {len(day['lines'])-4} упр.", font=f_footer, fill=MGRAY)
+        if len(day["lines"]) > max_lines:
+            draw.text((cx1 + 24, ey), f"+ ещё {len(day['lines']) - max_lines} упр.", font=f_footer, fill=GRAY)
 
-        y += day_h
+        y += CARD_H + 14
 
     # ── FOOTER ──
-    draw.rectangle([0, H - 80, W, H], fill=BLACK)
-    draw.rectangle([0, H - 80, 8, H], fill=RED)
-    draw.text((PAD, H - 56), "Зал Пионер · с 2014 года · 2000+ результатов", font=f_footer, fill=MGRAY)
-    draw.text((W - PAD - 220, H - 56), "pioneer-online", font=f_footer, fill=(70,70,70))
+    draw.rectangle([0, H - FOOTER_H, W, H], fill=BLACK)
+    draw.rectangle([0, H - FOOTER_H, 10, H], fill=RED)
+    draw.text((PAD, H - FOOTER_H + 24), "Зал Пионер · с 2014 · 2000+ результатов", font=f_footer, fill=GRAY)
+    draw.text((W - PAD - 240, H - FOOTER_H + 24), "pioneer-online.ru", font=f_footer, fill=(60,60,60))
 
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True, quality=95)
+    img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
     return buf.read()
 
