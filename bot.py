@@ -215,153 +215,143 @@ async def post_init(app: Application):
 # ── Команды ────────────────────────────────────────────────────────────────
 
 def make_week_card(client: dict) -> bytes | None:
-    """Генерирует PNG-шпаргалку с планом текущей недели."""
+    """Генерирует PNG-шпаргалку 9:16 с планом текущей недели."""
     if not PILLOW_OK:
         return None
     program = client.get("program", "")
     if not program:
         return None
 
-    RED = (220, 16, 16)
-    BLACK = (13, 13, 13)
-    WHITE = (255, 255, 255)
-    GRAY = (245, 245, 245)
-    LGRAY = (200, 200, 200)
+    import re, os, io
 
-    W, PAD = 900, 36
-    # Try to find any available font, fall back to default
-    def load_font(size):
-        for path in [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-        ]:
-            try:
-                return ImageFont.truetype(path, size)
-            except:
-                continue
-        return ImageFont.load_default()
+    # Fonts - bundled with the project
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    font_bold_path = os.path.join(base_dir, "fonts", "DejaVuSans-Bold.ttf")
+    font_reg_path  = os.path.join(base_dir, "fonts", "DejaVuSans.ttf")
 
-    def load_font_reg(size):
-        for path in [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
-        ]:
-            try:
-                return ImageFont.truetype(path, size)
-            except:
-                continue
-        return ImageFont.load_default()
+    def get_font(path, size, fallback_size=None):
+        try:
+            return ImageFont.truetype(path, size)
+        except:
+            return ImageFont.load_default(size=fallback_size or size)
 
-    font_big = load_font(26)
-    font_mid = load_font(17)
-    font_sm  = load_font_reg(14)
-    font_xs  = load_font_reg(13)
+    # Parse days
+    day_keys = ["ПОНЕДЕЛЬНИК","ВТОРНИК","СРЕДА","ЧЕТВЕРГ","ПЯТНИЦА","СУББОТА","ВОСКРЕСЕНЬЕ",
+                "ТРЕНИРОВКА","ДЕНЬ 1","ДЕНЬ 2","ДЕНЬ 3","ДЕНЬ 4","ДЕНЬ 5","ДЕНЬ 6","ДЕНЬ 7"]
+    short_names = {"ПОНЕДЕЛЬНИК":"ПН","ВТОРНИК":"ВТ","СРЕДА":"СР","ЧЕТВЕРГ":"ЧТ",
+                   "ПЯТНИЦА":"ПТ","СУББОТА":"СБ","ВОСКРЕСЕНЬЕ":"ВС"}
 
-    import re
     days = []
-    current_day = None
-    day_names = {
-        "ПОНЕДЕЛЬНИК": "Пн", "ВТОРНИК": "Вт", "СРЕДА": "Ср",
-        "ЧЕТВЕРГ": "Чт", "ПЯТНИЦА": "Пт", "СУББОТА": "Сб", "ВОСКРЕСЕНЬЕ": "Вс",
-        "ТРЕНИРОВКА 1": "Трен 1", "ТРЕНИРОВКА 2": "Трен 2",
-        "ТРЕНИРОВКА 3": "Трен 3", "ТРЕНИРОВКА 4": "Трен 4",
-        "ДЕНЬ 1": "День 1", "ДЕНЬ 2": "День 2", "ДЕНЬ 3": "День 3",
-        "ДЕНЬ 4": "День 4", "ДЕНЬ 5": "День 5",
-    }
+    current = None
     for line in program.split("\n"):
-        line_s = line.strip()
-        if not line_s:
-            continue
-        upper = line_s.upper()
-        matched_day = None
-        for key, short in day_names.items():
-            if key in upper:
-                matched_day = short
-                # Try to get full context after keyword
-                idx = upper.find(key)
-                rest = line_s[idx:idx+40].strip()
-                matched_day = rest[:30] if rest else short
+        s = line.strip()
+        if not s: continue
+        up = s.upper()
+        found = False
+        for key in day_keys:
+            if key in up:
+                if current and current["lines"]:
+                    days.append(current)
+                short = short_names.get(key, key[:5])
+                current = {"name": short, "full": s[:35].strip("*#| "), "lines": []}
+                found = True
                 break
-        if matched_day:
-            if current_day and current_day["lines"]:
-                days.append(current_day)
-            current_day = {"name": matched_day, "lines": []}
-        elif current_day:
-            # Accept lines with exercise-like content
-            clean = re.sub(r"^[|#*\s]+", "", line_s).strip()
-            clean = re.sub(r"[|]+$", "", clean).strip()
-            if clean and len(clean) > 4 and "---" not in clean and "===" not in clean:
-                current_day["lines"].append(clean[:85])
-    if current_day and current_day["lines"]:
-        days.append(current_day)
-
-    # Fallback: if no days found, split by empty lines into blocks
-    if not days:
-        blocks = []
-        cur = []
-        for line in program.split("\n"):
-            l = line.strip()
-            if not l:
-                if cur:
-                    blocks.append(cur)
-                    cur = []
-            else:
-                cur.append(l)
-        if cur:
-            blocks.append(cur)
-        for i, block in enumerate(blocks[:7]):
-            if block:
-                days.append({"name": f"День {i+1}", "lines": [re.sub(r"^[#*\-–•\s|]+","",l).strip()[:85] for l in block[:8] if len(l.strip())>3]})
+        if not found and current:
+            clean = re.sub(r'^[|*#\-\s]+', '', s).strip()
+            clean = re.sub(r'[|]+$', '', clean).strip()
+            if clean and len(clean) > 4 and "---" not in clean:
+                current["lines"].append(clean[:75])
+    if current and current["lines"]:
+        days.append(current)
 
     if not days:
         return None
 
-    # Calculate height
-    HEADER_H = 80
-    DAY_H = 36
-    ROW_H = 22
-    FOOTER_H = 44
-    total_rows = sum(min(len(d["lines"]), 8) for d in days)
-    H = HEADER_H + len(days) * DAY_H + total_rows * ROW_H + FOOTER_H + PAD * 2
+    days = days[:7]
 
-    img = Image.new("RGB", (W, H), WHITE)
+    # Canvas 9:16 ratio
+    W = 1080
+    H = 1920
+    RED   = (220, 16, 16)
+    BLACK = (13, 13, 13)
+    WHITE = (255, 255, 255)
+    DARK  = (28, 28, 28)
+    LGRAY = (245, 245, 245)
+    MGRAY = (160, 160, 160)
+    CARD_BG = (38, 38, 38)
+
+    img = Image.new("RGB", (W, H), DARK)
     draw = ImageDraw.Draw(img)
 
-    # Header
+    PAD = 56
+
+    # ── HEADER ──
+    HEADER_H = 160
     draw.rectangle([0, 0, W, HEADER_H], fill=BLACK)
+    # Red accent bar
+    draw.rectangle([0, 0, 8, HEADER_H], fill=RED)
+
+    f_title  = get_font(font_bold_path, 52)
+    f_sub    = get_font(font_reg_path,  28)
+    f_day    = get_font(font_bold_path, 30)
+    f_exer   = get_font(font_reg_path,  24)
+    f_footer = get_font(font_reg_path,  22)
+
     name = client.get("name", "Атлет")
     week = client.get("current_week", 1)
-    draw.text((PAD, 16), "PIONEER ONLINE", font=font_big, fill=RED)
-    draw.text((PAD, 50), f"{name} · Неделя {week}", font=font_sm, fill=LGRAY)
-    draw.text((W - PAD - 120, 28), f"pioneer-online", font=font_xs, fill=(80,80,80))
 
-    y = HEADER_H + 16
-    for i, day in enumerate(days[:7]):
-        # Day header
-        bg = GRAY if i % 2 == 0 else WHITE
-        draw.rectangle([PAD, y, W - PAD, y + DAY_H - 4], fill=bg, outline=LGRAY, width=1)
-        draw.rectangle([PAD, y, PAD + 6, y + DAY_H - 4], fill=RED)
-        draw.text((PAD + 16, y + 8), day["name"].upper(), font=font_mid, fill=BLACK)
-        y += DAY_H
+    draw.text((PAD, 28), "PIONEER ONLINE", font=f_title, fill=RED)
+    draw.text((PAD, 96), f"{name}  ·  Неделя {week}", font=f_sub, fill=MGRAY)
+
+    # ── DAYS ──
+    content_h = H - HEADER_H - 80  # footer
+    day_h = content_h // max(len(days), 1)
+    day_h = min(day_h, 240)
+
+    y = HEADER_H + 20
+
+    for i, day in enumerate(days):
+        # Day card
+        card_y = y
+        card_h = day_h - 12
+        bg = CARD_BG if i % 2 == 0 else (32, 32, 32)
+        draw.rectangle([PAD, card_y, W - PAD, card_y + card_h], fill=bg)
+        # Red left border
+        draw.rectangle([PAD, card_y, PAD + 6, card_y + card_h], fill=RED)
+
+        # Day name badge
+        badge_w = 80
+        draw.rectangle([PAD + 14, card_y + 10, PAD + 14 + badge_w, card_y + 50], fill=RED)
+        draw.text((PAD + 20, card_y + 14), day["name"], font=f_day, fill=WHITE)
+
+        # Full day title
+        full_text = day["full"] if len(day["full"]) > len(day["name"]) else ""
+        if full_text:
+            draw.text((PAD + 14 + badge_w + 16, card_y + 16), full_text[:40], font=f_sub, fill=MGRAY)
 
         # Exercises
-        for line in day["lines"][:8]:
-            draw.text((PAD + 16, y + 3), f"  {line}", font=font_xs, fill=(60,60,60))
-            y += ROW_H
+        ex_y = card_y + 60
+        for j, line in enumerate(day["lines"][:4]):
+            if ex_y + 32 > card_y + card_h - 10:
+                break
+            dot_x = PAD + 20
+            draw.ellipse([dot_x, ex_y + 8, dot_x + 8, ex_y + 16], fill=RED)
+            draw.text((dot_x + 16, ex_y), line, font=f_exer, fill=LGRAY)
+            ex_y += 34
 
-        y += 4
+        if len(day["lines"]) > 4:
+            draw.text((PAD + 20, ex_y), f"+ ещё {len(day['lines'])-4} упр.", font=f_footer, fill=MGRAY)
 
-    # Footer
-    draw.rectangle([0, H - FOOTER_H, W, H], fill=BLACK)
-    draw.text((PAD, H - FOOTER_H + 14), "Зал Пионер · с 2014 года · 2000+ результатов", font=font_xs, fill=(120,120,120))
+        y += day_h
 
-    import io
+    # ── FOOTER ──
+    draw.rectangle([0, H - 80, W, H], fill=BLACK)
+    draw.rectangle([0, H - 80, 8, H], fill=RED)
+    draw.text((PAD, H - 56), "Зал Пионер · с 2014 года · 2000+ результатов", font=f_footer, fill=MGRAY)
+    draw.text((W - PAD - 220, H - 56), "pioneer-online", font=f_footer, fill=(70,70,70))
+
     buf = io.BytesIO()
-    img.save(buf, format="PNG", optimize=True)
+    img.save(buf, format="PNG", optimize=True, quality=95)
     buf.seek(0)
     return buf.read()
 
