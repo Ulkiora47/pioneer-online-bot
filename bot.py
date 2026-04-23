@@ -32,10 +32,11 @@ log = logging.getLogger(__name__)
 
 # ── Состояния ConversationHandler ─────────────────────────────────────────
 LOG_DAY, LOG_FEEL, LOG_RPE, LOG_WEIGHTS, LOG_NOTES = range(5)
+NUT_GOAL, NUT_DATA, NUT_PREFS = range(5, 8)
+NUT_SEX, NUT_AGE, NUT_WEIGHT, NUT_HEIGHT, NUT_ACTIVITY, NUT_GOAL, NUT_PREFS = range(10, 17)
 
 # ── Системные промпты ──────────────────────────────────────────────────────
 SYSTEM_MAIN = """Ты — ассистент тренерской команды зала Пионер (Pioneer Online). Зал работает с 2014 года, 2000+ результатов от фитнеса до МС.
-
 СТИЛЬ: короткие сообщения, живой язык, как пишет тренер другу. Никакой воды и длинных объяснений. Один вопрос — одно сообщение. Поддерживай, но без пафоса.
 
 АНКЕТА — строго по одному шагу, жди ответа:
@@ -58,12 +59,67 @@ CF: 3 модальности, 3 энергосистемы, масштабиро
 ПРОГРАММА: одна неделя за раз. После каждой: "✅ Неделя N готова. Пиши *далее* — следующая."
 
 ВАЖНО: пиши кратко. Максимум 5–7 строк на сообщение. Никаких длинных списков без запроса. Русский язык, Telegram Markdown."""
+SYSTEM_NUTRITION = """Ты — спортивный нутрициолог с 12+ годами практики. Работаешь с атлетами от любителей до профессионалов.
+БАЗА ЗНАНИЙ: спортивная диетология, нутрициология, биохимия питания, периодизация питания под тренировочный цикл. Знаешь работы Лайла Макдональда, Алана Арагона, позиции ISSN, ADA, современные исследования по композиции тела.
 
+РАСЧЁТ КБЖУ:
+- Базовый обмен: формула Миффлина-Сан Жеора (точнее для спортсменов чем Харриса-Бенедикта)
+- Коэффициенты активности: сидячий 1.2, лёгкая 1.375, умеренная 1.55, высокая 1.725, очень высокая 1.9
+- Для набора: +10-20% к TDEE (0.5-1 кг/мес — чистый набор)
+- Для похудения: -20% от TDEE (не более -500 ккал/день)
+- Для рекомпозиции: TDEE ±0, высокий белок
+- Белок: 1.6-2.2 г/кг для силовых, 1.4-1.7 г/кг для циклических, 2.2-3.0 г/кг при дефиците
+- Жиры: минимум 0.8-1.0 г/кг (гормоны, витамины), обычно 25-30% калорий
+- Углеводы: остаток калорий
+- Учитывай: тип спорта, фазу цикла (набор/сушка/поддержание), время тренировок, пищевые предпочтения
+
+МЕНЮ:
+- Строй меню на реальных продуктах, доступных в России
+- Учитывай вкусовые предпочтения и аллергии
+- Разбивай на 3-5 приёмов пищи
+- Указывай граммовку каждого продукта
+- Давай варианты замены продуктов
+- Учитывай пери-тренировочное питание (пред- и пост-тренировка)
+
+СТИЛЬ: короткие сообщения. Конкретные цифры. Без воды. Как говорит хороший специалист — по делу.
+Отвечай по-русски. Telegram Markdown: *жирный*, _курсив_."""
+SYSTEM_NUTRITION = """Ты — спортивный нутрициолог и диетолог высокого уровня. Работаешь в команде зала Пионер.
+ЭКСПЕРТИЗА: спортивное питание, периодизация нутриции, работа с весом (набор/сушка/рекомпозиция), питание для силовых и циклических видов спорта, микронутриенты, спортивные добавки.
+
+БАЗА ЗНАНИЙ: Лайл МакДональд, Алан Арагон, Eric Helms (The Muscle and Strength Nutrition Pyramid), Israetel (Renaissance Periodization), ISSN guidelines 2023.
+
+РАСЧЁТ КБЖУ — СТРОГИЙ АЛГОРИТМ:
+1. Базовый обмен (BMR) по формуле Миффлина-Сан Жеора:
+   Муж: 10×вес + 6.25×рост − 5×возраст + 5
+   Жен: 10×вес + 6.25×рост − 5×возраст − 161
+2. TDEE = BMR × коэффициент активности:
+   1.2 — сидячий | 1.375 — лёгкая (1-3 трен/нед) | 1.55 — умеренная (3-5) | 1.725 — высокая (6-7) | 1.9 — очень высокая (2× в день)
+3. Коррекция под цель:
+   Набор: +200..+350 ккал (чистый набор) или +400..+500 (агрессивный)
+   Сушка: −300..−500 ккал (умеренный дефицит) или до −750 (быстрая, с риском потери мышц)
+   Рекомпозиция: ±0..±100 ккал (только для начинающих или после перерыва)
+4. Распределение БЖУ:
+   БЕЛОК: 1.6–2.2 г/кг (силовые), 1.4–1.8 г/кг (циклические), 2.2–2.6 г/кг (сушка)
+   ЖИРЫ: минимум 0.8–1.0 г/кг, оптимум 25–30% от ккал
+   УГЛЕВОДЫ: остаток калорий (4 ккал/г)
+5. Тайминг нутриции (если спрашивают):
+   — Белок равномерно 3–5 приёмов, порция 30–50 г
+   — Углеводы акцент до и после тренировки
+   — Жиры подальше от тренировки
+
+МЕНЮ НА НЕДЕЛЮ:
+— Реальные блюда из доступных продуктов
+— Указывай граммовку каждого ингредиента
+— КБЖУ каждого приёма и итог дня
+— Учитывай пищевые предпочтения и ограничения
+— Одна неделя за раз, 5–7 дней
+— Делай меню разнообразным, не повторяй одни блюда каждый день
+
+СТИЛЬ: короткий живой язык, как эксперт который говорит с клиентом. Никакой воды. Цифры — точные. Русский язык."""
 SYSTEM_ANALYSIS = """Ты — профессиональный спортивный аналитик и тренер.
 Анализируй дневник тренировок, давай конкретные экспертные рекомендации.
 Используй периодизацию, RPE, спортивную физиологию. Отвечай по-русски.
 Telegram Markdown: *жирный*, _курсив_."""
-
 # ── Псевдонимы кнопок → команды ───────────────────────────────────────────
 ALIASES = {
     "записать тренировку":  "log",
@@ -74,6 +130,16 @@ ALIASES = {
     "далее":                "nextweek",
     "шпаргалка":            "card",
     "карточка недели":      "card",
+    "питание":              "nutrition",
+    "кбжу":                 "nutrition",
+    "нутрициолог":          "nutrition",
+    "меню на неделю":       "nutmenu",
+    "питание и кбжу":      "nutrition",
+    "питание":              "nutrition",
+    "нутрициолог":          "nutrition",
+    "кбжу":                 "nutrition",
+    "меню на неделю":       "nutmenu",
+    "меню":                 "nutmenu",
     "корректировка":        "adjust",
     "начать заново":        "reset",
     "помощь":               "help",
@@ -93,6 +159,7 @@ def main_kb() -> ReplyKeyboardMarkup:
         [
             ["📓 Записать тренировку",  "📊 Анализ недели"],
             ["📈 Мой прогресс",          "📋 Мои записи"],
+            ["🥗 Питание и КБЖУ",        "🍽 Меню на неделю"],
             ["🃏 Шпаргалка недели",      "➡️ Следующая неделя"],
             ["⚙️ Корректировка",         "❓ Помощь"],
         ],
@@ -210,6 +277,10 @@ async def post_init(app: Application):
         BotCommand("stats",    "📊 Статистика бота (тренер)"),
         BotCommand("client",   "👤 Карточка клиента (тренер)"),
         BotCommand("card",     "🃏 Шпаргалка недели — сохранить фото"),
+        BotCommand("nutrition", "🥗 Питание и расчёт КБЖУ"),
+        BotCommand("nutmenu",  "📋 Меню на неделю"),
+        BotCommand("nutrition", "🥗 Расчёт КБЖУ и питание"),
+        BotCommand("nutmenu",  "🍽 Меню на неделю"),
     ])
 
 # ── Команды ────────────────────────────────────────────────────────────────
@@ -802,6 +873,203 @@ async def cmd_client(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             log.error(f"Client analysis error: {e}")
 
+# ── NUTRITION ConversationHandler ─────────────────────────────────────────────
+def activity_kb():
+    return ReplyKeyboardMarkup([
+        ["🪑 Сидячая работа, мало движения"],
+        ["🚶 1–3 тренировки в неделю"],
+        ["🏃 3–5 тренировок в неделю"],
+        ["💪 6–7 тренировок или тяжёлый физтруд"],
+        ["🔥 2× в день, профи уровень"],
+    ], resize_keyboard=True, one_time_keyboard=True)
+
+def goal_kb():
+    return ReplyKeyboardMarkup([
+        ["📉 Похудение / сушка"],
+        ["📈 Набор мышечной массы"],
+        ["⚖️ Рекомпозиция (масса без жира)"],
+        ["🔄 Поддержание формы"],
+        ["🏆 Подготовка к соревнованиям"],
+    ], resize_keyboard=True, one_time_keyboard=True)
+
+def sex_kb():
+    return ReplyKeyboardMarkup([
+        ["👨 Мужчина", "👩 Женщина"]
+    ], resize_keyboard=True, one_time_keyboard=True)
+
+async def cmd_nutrition(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    kb = ReplyKeyboardMarkup(
+        [["Набор массы", "Сушка / похудение"],
+         ["Рекомпозиция", "Поддержание формы"],
+         ["Отмена"]],
+        resize_keyboard=True, one_time_keyboard=True
+    )
+    await update.message.reply_text(
+        "Нутрициолог Pioneer Online\n\nКакая цель по питанию?",
+        reply_markup=kb
+    )
+    return NUT_GOAL
+
+async def nut_goal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "Отмена":
+        await update.message.reply_text("Отменено.", reply_markup=main_kb())
+        return ConversationHandler.END
+    ctx.user_data["nut_goal"] = update.message.text
+    await update.message.reply_text(
+        "Цель: " + update.message.text + "\n\n"
+        "Данные для расчёта — напиши через запятую:\n"
+        "возраст, пол (м/ж), рост (см), вес (кг), тренировок в неделю\n\n"
+        "Пример: 28, м, 180, 85, 4",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return NUT_DATA
+
+async def nut_data(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    import re as re2
+    text = update.message.text.strip()
+    parts = [p.strip() for p in re2.split(r'[,;]', text)]
+    if len(parts) < 5:
+        await update.message.reply_text(
+            "Нужно 5 значений: возраст, пол, рост, вес, тренировок/нед\n"
+            "Пример: 28, м, 180, 85, 4"
+        )
+        return NUT_DATA
+    ctx.user_data["nut_params"] = text
+    await update.message.reply_text(
+        "Почти готово!\n\n"
+        "Есть ли аллергии, непереносимость продуктов или ограничения в питании?\n\n"
+        "Если нет — напиши «нет»"
+    )
+    return NUT_PREFS
+
+async def nut_prefs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    c = get_client(uid)
+    await ctx.bot.send_chat_action(chat_id=uid, action=ChatAction.TYPING)
+
+    goal   = ctx.user_data.get("nut_goal", "")
+    params = ctx.user_data.get("nut_params", "")
+    prefs  = update.message.text
+
+    if "nutrition" not in c:
+        c["nutrition"] = {}
+    c["nutrition"] = {"goal": goal, "params": params, "prefs": prefs}
+
+    sport_map = {"pl":"пауэрлифтинг/ТА","bb":"бодибилдинг","cf":"кроссфит",
+                 "cy":"бег/вело/плавание","ma":"единоборства"}
+    sport_ctx = sport_map.get(c.get("sport",""), "не указан")
+
+    prompt = (
+        "Рассчитай КБЖУ и составь рекомендации по питанию.\n\n"
+        "Цель: " + goal + "\n"
+        "Данные: " + params + " (возраст, пол, рост, вес, тренировок/нед)\n"
+        "Ограничения: " + prefs + "\n"
+        "Вид спорта: " + sport_ctx + "\n\n"
+        "Сделай:\n"
+        "1. Расчёт BMR и TDEE с формулой и цифрами\n"
+        "2. Целевой калораж с обоснованием\n"
+        "3. КБЖУ в граммах\n"
+        "4. Распределение по приёмам пищи\n"
+        "5. 3-5 ключевых правил для этой цели\n"
+        "6. Добавки с доказательной базой\n\n"
+        "Конкретно, с цифрами. Без воды."
+    )
+
+    try:
+        hist = [{"role":"user","content":prompt}]
+        result = claude(hist, system=SYSTEM_NUTRITION)
+        c["nutrition"]["kbju_result"] = result
+        c["nutrition_history"] = [{"role":"user","content":prompt},{"role":"assistant","content":result}]
+        save_client(uid, c)
+
+        for chunk in [result[i:i+4000] for i in range(0, len(result), 4000)]:
+            try:
+                await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+            except:
+                await update.message.reply_text(chunk)
+
+        await update.message.reply_text(
+            "Хочешь меню на неделю под этот КБЖУ?\nНапиши /nutmenu",
+            reply_markup=ReplyKeyboardMarkup(
+                [["Меню на неделю", "Пересчитать КБЖУ"]],
+                resize_keyboard=True, one_time_keyboard=True
+            )
+        )
+    except Exception as e:
+        log.error(f"Nutrition error: {e}")
+        await update.message.reply_text("Ошибка расчёта. Попробуй ещё раз.", reply_markup=main_kb())
+
+    return ConversationHandler.END
+
+async def nut_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Отменено.", reply_markup=main_kb())
+    return ConversationHandler.END
+
+
+async def cmd_nutmenu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    c = get_client(uid)
+    nut = c.get("nutrition", {})
+
+    if not nut.get("kbju_result"):
+        await update.message.reply_text(
+            "Сначала рассчитай КБЖУ — используй /nutrition",
+            reply_markup=main_kb()
+        )
+        return
+
+    await ctx.bot.send_chat_action(chat_id=uid, action=ChatAction.TYPING)
+    await update.message.reply_text("Составляю меню на неделю...")
+
+    kbju  = nut.get("kbju_result","")[:1500]
+    goal  = nut.get("goal","")
+    prefs = nut.get("prefs","нет")
+    sport_map = {"pl":"пауэрлифтинг/ТА","bb":"бодибилдинг","cf":"кроссфит",
+                 "cy":"бег/вело/плавание","ma":"единоборства"}
+    sport = sport_map.get(c.get("sport",""), "")
+
+    prompt = (
+        "Составь подробное меню на 7 дней.\n\n"
+        "Цель: " + goal + "\n"
+        "Ограничения: " + prefs + "\n"
+        "Вид спорта: " + sport + "\n\n"
+        "Расчёт КБЖУ:\n" + kbju + "\n\n"
+        "Требования:\n"
+        "- Каждый день: завтрак, обед, ужин, 1-2 перекуса\n"
+        "- Каждое блюдо: название, граммовка ингредиентов, КБЖУ\n"
+        "- Итог дня: суммарные К/Б/Ж/У\n"
+        "- Не повторять блюда больше 2 раз за неделю\n"
+        "- Реальные доступные продукты\n"
+        "- В тренировочные дни больше углеводов до/после тренировки\n\n"
+        "Формат: День 1...День 7. Компактно но полно."
+    )
+
+    try:
+        hist = c.get("nutrition_history", [])
+        hist.append({"role":"user","content":prompt})
+        result = claude(hist[-10:], system=SYSTEM_NUTRITION)
+        hist.append({"role":"assistant","content":result})
+        c["nutrition_history"] = hist[-20:]
+        c["nutrition"]["menu"] = result
+        save_client(uid, c)
+
+        for chunk in [result[i:i+4000] for i in range(0, len(result), 4000)]:
+            try:
+                await update.message.reply_text(chunk, parse_mode=ParseMode.MARKDOWN)
+            except:
+                await update.message.reply_text(chunk)
+
+        await update.message.reply_text(
+            "Меню на неделю готово! Скажи если хочешь скорректировать любой день или блюдо.",
+            reply_markup=main_kb()
+        )
+    except Exception as e:
+        log.error(f"Menu error: {e}")
+        await update.message.reply_text("Ошибка при составлении меню. Попробуй позже.", reply_markup=main_kb())
+
+
+
 # ── /log — ConversationHandler ─────────────────────────────────────────────
 async def cmd_log_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     week = get_client(update.effective_user.id).get("current_week", 1)
@@ -885,6 +1153,10 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     cmd = resolve_alias(text)
     if cmd == "log":      return await cmd_log_start(update, ctx)
     if cmd == "card":     return await cmd_card(update, ctx)
+    if cmd == "nutrition": return await cmd_nutrition(update, ctx)
+    if cmd == "nutmenu":  return await cmd_nutmenu(update, ctx)
+    if cmd == "nutrition": return await cmd_nutrition(update, ctx)
+    if cmd == "nutmenu":   return await cmd_nutmenu(update, ctx)
     if cmd == "week":     return await cmd_week(update, ctx)
     if cmd == "progress": return await cmd_progress(update, ctx)
     if cmd == "logview":  return await cmd_logview(update, ctx)
@@ -967,6 +1239,41 @@ def main():
     app.add_handler(CommandHandler("stats",    cmd_stats))
     app.add_handler(CommandHandler("client",   cmd_client))
     app.add_handler(CommandHandler("card",     cmd_card))
+    app.add_handler(CommandHandler("nutmenu",  cmd_nutmenu))
+
+    nut_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("nutrition", cmd_nutrition),
+            MessageHandler(filters.Regex(r"(?i)(питание|кбжу|нутрицио|меню на неделю|пересчитать кбжу)"), cmd_nutrition),
+        ],
+        states={
+            NUT_GOAL:  [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_goal)],
+            NUT_DATA:  [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_data)],
+            NUT_PREFS: [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_prefs)],
+        },
+        fallbacks=[CommandHandler("cancel", nut_cancel)],
+    )
+    app.add_handler(nut_conv)
+    app.add_handler(CommandHandler("nutrition", cmd_nutrition))
+    app.add_handler(CommandHandler("nutmenu",   cmd_nutmenu))
+
+    nut_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("nutrition", cmd_nutrition),
+            MessageHandler(filters.Regex(r"(?i)(питание|кбжу|нутрициолог|🥗)"), cmd_nutrition),
+        ],
+        states={
+            NUT_SEX:      [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_sex)],
+            NUT_AGE:      [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_age)],
+            NUT_WEIGHT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_weight)],
+            NUT_HEIGHT:   [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_height)],
+            NUT_ACTIVITY: [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_activity)],
+            NUT_GOAL:     [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_goal)],
+            NUT_PREFS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, nut_prefs)],
+        },
+        fallbacks=[CommandHandler("cancel", nut_cancel)],
+    )
+    app.add_handler(nut_conv)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     log.info("🚀 Pioneer Online — Telegram Bot запущен!")
