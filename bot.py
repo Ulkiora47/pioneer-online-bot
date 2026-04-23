@@ -229,34 +229,93 @@ def make_week_card(client: dict) -> bytes | None:
     LGRAY = (200, 200, 200)
 
     W, PAD = 900, 36
-    font_big = font_mid = font_sm = font_xs = None
-    try:
-        font_big = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-        font_mid = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_sm  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 15)
-        font_xs  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
-    except:
-        font_big = font_mid = font_sm = font_xs = ImageFont.load_default()
+    # Try to find any available font, fall back to default
+    def load_font(size):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                continue
+        return ImageFont.load_default()
 
-    # Parse days from program text
+    def load_font_reg(size):
+        for path in [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        ]:
+            try:
+                return ImageFont.truetype(path, size)
+            except:
+                continue
+        return ImageFont.load_default()
+
+    font_big = load_font(26)
+    font_mid = load_font(17)
+    font_sm  = load_font_reg(14)
+    font_xs  = load_font_reg(13)
+
     import re
     days = []
     current_day = None
+    day_names = {
+        "ПОНЕДЕЛЬНИК": "Пн", "ВТОРНИК": "Вт", "СРЕДА": "Ср",
+        "ЧЕТВЕРГ": "Чт", "ПЯТНИЦА": "Пт", "СУББОТА": "Сб", "ВОСКРЕСЕНЬЕ": "Вс",
+        "ТРЕНИРОВКА 1": "Трен 1", "ТРЕНИРОВКА 2": "Трен 2",
+        "ТРЕНИРОВКА 3": "Трен 3", "ТРЕНИРОВКА 4": "Трен 4",
+        "ДЕНЬ 1": "День 1", "ДЕНЬ 2": "День 2", "ДЕНЬ 3": "День 3",
+        "ДЕНЬ 4": "День 4", "ДЕНЬ 5": "День 5",
+    }
     for line in program.split("\n"):
-        line = line.strip()
-        if not line:
+        line_s = line.strip()
+        if not line_s:
             continue
-        day_match = re.search(r"(ПОНЕДЕЛЬНИК|ВТОРНИК|СРЕДА|ЧЕТВЕРГ|ПЯТНИЦА|СУББОТА|ВОСКРЕСЕНЬЕ)", line.upper())
-        if day_match:
-            if current_day:
+        upper = line_s.upper()
+        matched_day = None
+        for key, short in day_names.items():
+            if key in upper:
+                matched_day = short
+                # Try to get full context after keyword
+                idx = upper.find(key)
+                rest = line_s[idx:idx+40].strip()
+                matched_day = rest[:30] if rest else short
+                break
+        if matched_day:
+            if current_day and current_day["lines"]:
                 days.append(current_day)
-            current_day = {"name": day_match.group(1).capitalize(), "lines": []}
-        elif current_day and ("|" in line or line.startswith(("-", "•", "–"))):
-            clean = re.sub(r"^[|]|[|]$", "", line).strip()
-            if clean and "---" not in clean and len(clean) > 3:
-                current_day["lines"].append(clean[:80])
-    if current_day:
+            current_day = {"name": matched_day, "lines": []}
+        elif current_day:
+            # Accept lines with exercise-like content
+            clean = re.sub(r"^[|#*\s]+", "", line_s).strip()
+            clean = re.sub(r"[|]+$", "", clean).strip()
+            if clean and len(clean) > 4 and "---" not in clean and "===" not in clean:
+                current_day["lines"].append(clean[:85])
+    if current_day and current_day["lines"]:
         days.append(current_day)
+
+    # Fallback: if no days found, split by empty lines into blocks
+    if not days:
+        blocks = []
+        cur = []
+        for line in program.split("\n"):
+            l = line.strip()
+            if not l:
+                if cur:
+                    blocks.append(cur)
+                    cur = []
+            else:
+                cur.append(l)
+        if cur:
+            blocks.append(cur)
+        for i, block in enumerate(blocks[:7]):
+            if block:
+                days.append({"name": f"День {i+1}", "lines": [re.sub(r"^[#*\-–•\s|]+","",l).strip()[:85] for l in block[:8] if len(l.strip())>3]})
 
     if not days:
         return None
